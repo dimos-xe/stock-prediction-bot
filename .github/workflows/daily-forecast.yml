@@ -2,10 +2,8 @@ name: Daily Stock Prediction
 
 on:
   schedule:
-    # Τρέχει κάθε μέρα Δευτέρα-Παρασκευή στις 16:45 UTC 
-    # (Δηλαδή 18:45 ή 19:45 ώρα Ελλάδος, τέλεια για κλείσιμο αγοράς)
     - cron: '45 16 * * 1-5'
-  workflow_dispatch: # Σου επιτρέπει να το τρέξεις και χειροκίνητα με κουμπί
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,4 +22,7 @@ jobs:
         pip install -r requirements.txt
         
     - name: Run Prediction Model
+      env:  # <--- ΑΥΤΟ ΕΙΝΑΙ ΤΟ ΝΕΟ ΚΟΜΜΑΤΙ
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
