@@ -2,17 +2,40 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from scipy.signal import argrelextrema
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV, train_test_split
 import xgboost as xgb
 from datetime import datetime, timedelta
 import sys
+import os
+import requests  # <--- ΝΕΑ ΒΙΒΛΙΟΘΗΚΗ
 
 # --- ΡΥΘΜΙΣΕΙΣ ---
 SYMBOL = "INGA.AS"  
 START_DATE = "2023-01-01"
 
 pd.options.mode.chained_assignment = None 
+
+# --- ΣΥΝΑΡΤΗΣΗ ΑΠΟΣΤΟΛΗΣ TELEGRAM ---
+def send_telegram_message(message):
+    token = os.getenv('TELEGRAM_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    
+    if not token or not chat_id:
+        print("⚠️ Telegram credentials not found. Skipping message.")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown" # Για να φαίνονται ωραία τα bold
+    }
+    
+    try:
+        requests.post(url, json=payload)
+        print("✅ Telegram message sent!")
+    except Exception as e:
+        print(f"❌ Failed to send Telegram message: {e}")
 
 class StockAnalyzer:
     def __init__(self, ticker, start_date, end_date):
@@ -112,7 +135,7 @@ class StockAnalyzer:
 
     def optimize_model(self, X_train, y_train):
         param_grid = {
-            'n_estimators': [100, 200], # Λίγο πιο ελαφρύ για το server
+            'n_estimators': [100, 200], 
             'learning_rate': [0.03, 0.05],
             'max_depth': [3, 4],
             'subsample': [0.8],
@@ -153,21 +176,26 @@ class StockAnalyzer:
         pred_return = model.predict(last_row)[0]
         pred_price = current_price * (1 + pred_return)
         
-        print("\n" + "="*40)
-        print(f"🤖 AUTOMATED REPORT FOR: {self.ticker}")
-        print(f"📅 Date: {last_row.index[0].strftime('%d-%m-%Y')}")
-        print("="*40)
-        print(f"📊 Market Stats:")
-        print(f"   • Current Price: {current_price:.2f}")
-        print(f"   • RSI:           {last_rsi:.2f}")
-        print(f"   • Beta (Risk):   {last_beta:.2f}")
-        print(f"   • Skewness:      {last_skew:.2f}")
-        print("-" * 40)
-        print(f"🔮 PREDICTION FOR TOMORROW:")
-        print(f"   • Change: {pred_return*100:+.2f}%")
-        print(f"   • Target: {pred_price:.2f}")
-        print(f"   • Trend:  {'🟢 BULLISH (ΑΝΟΔΟΣ)' if pred_return > 0 else '🔴 BEARISH (ΠΤΩΣΗ)'}")
-        print("="*40 + "\n")
+        # --- ΕΤΟΙΜΑΣΙΑ ΜΗΝΥΜΑΤΟΣ ---
+        trend_emoji = "🟢" if pred_return > 0 else "🔴"
+        trend_text = "BULLISH (ΑΝΟΔΟΣ)" if pred_return > 0 else "BEARISH (ΠΤΩΣΗ)"
+        
+        msg = (
+            f"🤖 *DAILY PREDICTION: {self.ticker}*\n"
+            f"📅 Date: {last_row.index[0].strftime('%d-%m-%Y')}\n\n"
+            f"📊 *Stats:*\n"
+            f"• Price: {current_price:.2f}\n"
+            f"• RSI: {last_rsi:.2f}\n"
+            f"• Beta: {last_beta:.2f}\n"
+            f"• Skew: {last_skew:.2f}\n\n"
+            f"🔮 *FORECAST:*\n"
+            f"• Change: {pred_return*100:+.2f}%\n"
+            f"• Target: {pred_price:.2f}\n"
+            f"• Trend: {trend_emoji} {trend_text}"
+        )
+        
+        print(msg) # Τύπωμα στο log
+        send_telegram_message(msg) # Αποστολή στο Telegram
 
 if __name__ == "__main__":
     today = datetime.now()
