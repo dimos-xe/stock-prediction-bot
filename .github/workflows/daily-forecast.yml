@@ -1,0 +1,27 @@
+name: Daily Stock Prediction
+
+on:
+  schedule:
+    # Τρέχει κάθε μέρα Δευτέρα-Παρασκευή στις 16:45 UTC 
+    # (Δηλαδή 18:45 ή 19:45 ώρα Ελλάδος, τέλεια για κλείσιμο αγοράς)
+    - cron: '45 16 * * 1-5'
+  workflow_dispatch: # Σου επιτρέπει να το τρέξεις και χειροκίνητα με κουμπί
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Run Prediction Model
+      run: python main.py
