@@ -2,7 +2,9 @@ name: Daily Stock Prediction
 
 on:
   schedule:
-   - cron: '30 18 * * *'
+    # 17:00 UTC = 19:00 Ώρα Ελλάδος (Χειμερινή)
+    # Τρέχει Δευτέρα με Παρασκευή (1-5)
+    - cron: '0 17 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -22,7 +24,7 @@ jobs:
         pip install -r requirements.txt
         
     - name: Run Prediction Model
-      env:  # <--- ΑΥΤΟ ΕΙΝΑΙ ΤΟ ΝΕΟ ΚΟΜΜΑΤΙ
+      env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
