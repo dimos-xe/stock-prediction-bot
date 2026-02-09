@@ -2,7 +2,7 @@ name: Daily Stock Prediction
 
 on:
   schedule:
-    - cron: '45 16 * * 1-5'
+    - cron: '0 17 * * 1-5'
   workflow_dispatch:
 
 jobs:
