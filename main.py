@@ -316,7 +316,7 @@ class StockAnalyzer:
 
         # ΔΙΟΡΘΩΜΕΝΟ ΜΗΝΥΜΑ ΜΕ ΤΙΜΗ ΚΑΙ SKEWNESS
         msg = (
-            f"🤖 *FULL POWER BOT: {self.ticker}*\n"
+            f" *DAILY UPDATE: {self.ticker}*\n"
             f"📅 {last_row.index[0].strftime('%d-%m')}\n"
             f"🏆 Win Rate: *{stats_text}*\n"
             f"-------------------\n"
