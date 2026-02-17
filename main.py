@@ -172,7 +172,7 @@ class StockAnalyzer:
             else:
                 df['Market_Return'] = 0.0
 
-            # 3. Μακροοικονομικά (VIX, Oil, EURUSD) - ΤΑ ΠΡΟΣΘΕΤΟΥΜΕ ΧΩΡΙΣ ΝΑ ΣΒΗΣΟΥΜΕ ΤΑ ΠΑΛΙΑ
+            # 3. Μακροοικονομικά (VIX, Oil, EURUSD)
             macros = yf.download(['^VIX', 'CL=F', 'EURUSD=X'], start=self.start, end=self.end, progress=False)
             
             if isinstance(macros.columns, pd.MultiIndex):
@@ -198,7 +198,7 @@ class StockAnalyzer:
         df = self.data.copy()
         if len(df) < 60: return
         
-        # --- ΠΑΛΙΟΙ ΔΕΙΚΤΕΣ (ΠΟΥ ΖΗΤΗΣΕΣ ΝΑ ΜΗΝ ΚΟΠΟΥΝ) ---
+        # --- ΠΑΛΙΟΙ ΔΕΙΚΤΕΣ ---
         df['Return'] = df['Close'].pct_change()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_Ratio'] = df['Close'] / df['SMA_50']
@@ -216,13 +216,13 @@ class StockAnalyzer:
         df['MACD'] = ema12 - ema26
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-        # ATR (Είχε αφαιρεθεί, το ξαναβάζω)
+        # ATR
         prev_close = df['Close'].shift(1)
         tr = pd.concat([df['High']-df['Low'], (df['High']-prev_close).abs(), (df['Low']-prev_close).abs()], axis=1).max(axis=1)
         df['ATR'] = tr.rolling(window=14).mean()
         df['ATR_Ratio'] = df['ATR'] / df['Close']
 
-        # Beta & Correlation (Είχαν αφαιρεθεί, τα ξαναβάζω)
+        # Beta & Correlation & Skewness
         window = 60
         rolling_cov = df['Return'].rolling(window).cov(df['Market_Return'])
         rolling_var = df['Market_Return'].rolling(window).var()
@@ -235,7 +235,7 @@ class StockAnalyzer:
         df['Return_Lag2'] = df['Return'].shift(2)
         df['Return_Lag3'] = df['Return'].shift(3)
 
-        # --- ΝΕΟΙ ΔΕΙΚΤΕΣ (ULTIMATE FEATURES) ---
+        # --- ΝΕΟΙ ΔΕΙΚΤΕΣ ---
         # Bollinger Bands
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['STD_20'] = df['Close'].rolling(window=20).std()
@@ -254,7 +254,7 @@ class StockAnalyzer:
         self.data = df.dropna()
 
     def optimize_model(self, X_train, y_train):
-        # GRID SEARCH (Όπως το ζήτησες)
+        # GRID SEARCH
         param_grid = {
             'n_estimators': [100, 200], 
             'learning_rate': [0.02, 0.05],
@@ -274,13 +274,13 @@ class StockAnalyzer:
         ml_data['Target'] = ml_data['Return'].shift(-1)
         ml_data = ml_data.dropna(subset=['Target'])
         
-        # ΛΙΣΤΑ FEATURES: ΤΩΡΑ ΠΕΡΙΛΑΜΒΑΝΕΙ ΤΑ ΠΑΝΤΑ (ΠΑΛΙΑ + ΝΕΑ)
+        # ΛΙΣΤΑ FEATURES
         features = [
             'Return', 'SMA_Ratio', 'RSI', 'MACD', 'MACD_Signal', 
-            'ATR_Ratio', 'Market_Return', 'Beta', 'Skewness', 'Correlation', # Παλιά
+            'ATR_Ratio', 'Market_Return', 'Beta', 'Skewness', 'Correlation',
             'Return_Lag1', 'Return_Lag2', 'Return_Lag3',
-            'BB_Position', 'OBV_Slope', 'Volume',                            # Νέα
-            'VIX_Change', 'Oil_Change', 'EURUSD'                             # Macro
+            'BB_Position', 'OBV_Slope', 'Volume',
+            'VIX_Change', 'Oil_Change', 'EURUSD'
         ]
         
         X = ml_data[features]
@@ -293,6 +293,9 @@ class StockAnalyzer:
         
         last_row = self.data.iloc[[-1]][features] 
         current_price = self.data.iloc[-1]['Close']
+        
+        # Ανάκτηση τιμών για το μήνυμα
+        last_skew = last_row['Skewness'].values[0] # <--- ΤΟ ΖΗΤΟΥΜΕΝΟ
         
         pred_return = model.predict(last_row)[0]
         pred_price = current_price * (1 + pred_return)
@@ -311,13 +314,15 @@ class StockAnalyzer:
         history_df = update_history(history_df, self.ticker, today_str, pred_return, direction)
         stats_text = get_stats(history_df, self.ticker)
 
-        # Εμφάνιση των πιο σημαντικών δεικτών στο μήνυμα
+        # ΔΙΟΡΘΩΜΕΝΟ ΜΗΝΥΜΑ ΜΕ ΤΙΜΗ ΚΑΙ SKEWNESS
         msg = (
             f"🤖 *FULL POWER BOT: {self.ticker}*\n"
             f"📅 {last_row.index[0].strftime('%d-%m')}\n"
             f"🏆 Win Rate: *{stats_text}*\n"
             f"-------------------\n"
-            f"📊 *Indicators:*\n"
+            f"📊 *Stats:*\n"
+            f"• Price: {current_price:.2f}€\n"       # <--- ΠΡΟΣΤΕΘΗΚΕ
+            f"• Skew: {last_skew:.2f}\n"              # <--- ΠΡΟΣΤΕΘΗΚΕ
             f"• RSI: {last_row['RSI'].values[0]:.1f}\n"
             f"• Beta: {last_row['Beta'].values[0]:.2f}\n"
             f"• VIX: {last_row['VIX_Change'].values[0]*100:+.1f}%\n"
