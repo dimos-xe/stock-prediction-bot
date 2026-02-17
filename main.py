@@ -14,8 +14,10 @@ import requests
 # ==============================================================================
 SYMBOLS = [
     "INGA.AS",  # ING
-    "NVDA",     # Nvidia
-    "OPAP.AT"   # ΟΠΑΠ
+    "GS",       # Goldman Sachs
+    "DBK.DE",   # Deutsche Bank
+    "SAN.MC",   # Banco Santander
+    "ENVA"      # Enova International
 ]
 
 START_DATE = "2023-01-01"
