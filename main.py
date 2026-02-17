@@ -10,7 +10,7 @@ import os
 import requests
 
 # ==============================================================================
-# 👇 ΡΥΘΜΙΣΕΙΣ (Βάλε εδώ τις μετοχές σου)
+# 👇 ΡΥΘΜΙΣΕΙΣ (ΟΙ 5 ΜΕΤΟΧΕΣ ΣΟΥ)
 # ==============================================================================
 SYMBOLS = [
     "INGA.AS",  # ING
@@ -21,9 +21,8 @@ SYMBOLS = [
 ]
 
 START_DATE = "2023-01-01"
-HISTORY_FILE = "history.csv"  # Το αρχείο που θα κρατάει τη μνήμη
-
-# ==============================================================================
+HISTORY_FILE = "history.csv"
+CONFIDENCE_THRESHOLD = 0.003  # 0.3% Φίλτρο Θορύβου
 
 pd.options.mode.chained_assignment = None 
 
@@ -53,74 +52,67 @@ def send_telegram_message(message):
 def load_history():
     if os.path.exists(HISTORY_FILE):
         return pd.read_csv(HISTORY_FILE)
-    # Δημιουργία κενού ιστορικού αν δεν υπάρχει
     return pd.DataFrame(columns=["Date", "Ticker", "Predicted_Return", "Direction", "Actual_Return", "Result"])
 
 def update_history(df_history, ticker, date_str, pred_return, direction):
-    # Α. Έλεγχος παλιών προβλέψεων (Αν κέρδισαν ή έχασαν)
+    # Α. Έλεγχος παλιών προβλέψεων
     mask = (df_history['Ticker'] == ticker) & (df_history['Result'].isna())
     
     if mask.any():
         print(f"🔎 Checking past predictions for {ticker}...")
         try:
-            # Κατεβάζουμε δεδομένα 5 ημερών για σιγουριά
             recent_data = yf.download(ticker, period="5d", progress=False, auto_adjust=False)
             
-            # Ανάκτηση τιμών κλεισίματος (Close)
             if isinstance(recent_data.columns, pd.MultiIndex):
                 close_prices = recent_data.xs('Close', level=0, axis=1).iloc[:, 0]
             else:
                 close_prices = recent_data['Close']
 
-            # Υπολογισμός πραγματικής απόδοσης (χθεσινό κλείσιμο vs προχθεσινό)
             if len(close_prices) >= 2:
                 actual_return = close_prices.pct_change().iloc[-1]
-                
-                # Ενημέρωση των κενών εγγραφών
                 indices = df_history[mask].index
                 for idx in indices:
                     pred_dir = df_history.loc[idx, 'Direction']
                     
-                    # Κανόνας Επιτυχίας: 
-                    # Αν είπαμε ΠΑΝΩ και πήγε ΠΑΝΩ (>0) -> WIN
-                    # Αν είπαμε ΚΑΤΩ και πήγε ΚΑΤΩ (<0) -> WIN
-                    is_correct = (pred_dir == "UP" and actual_return > 0) or \
-                                 (pred_dir == "DOWN" and actual_return < 0)
+                    if pred_dir == "NEUTRAL":
+                        df_history.loc[idx, 'Result'] = "SKIPPED"
+                    else:
+                        is_correct = (pred_dir == "UP" and actual_return > 0) or \
+                                     (pred_dir == "DOWN" and actual_return < 0)
+                        df_history.loc[idx, 'Result'] = "WIN" if is_correct else "LOSS"
                     
                     df_history.loc[idx, 'Actual_Return'] = round(actual_return * 100, 2)
-                    df_history.loc[idx, 'Result'] = "WIN" if is_correct else "LOSS"
-                    print(f"   -> Previous prediction result: {'WIN' if is_correct else 'LOSS'}")
         except Exception as e:
             print(f"⚠️ Could not verify yesterday's prediction: {e}")
 
-    # Β. Προσθήκη της σημερινής πρόβλεψης
+    # Β. Προσθήκη σημερινής πρόβλεψης
     new_row = {
         "Date": date_str,
         "Ticker": ticker,
         "Predicted_Return": round(pred_return * 100, 2),
         "Direction": direction,
-        "Actual_Return": None, # Θα συμπληρωθεί αύριο
-        "Result": None         # Θα συμπληρωθεί αύριο
+        "Actual_Return": None,
+        "Result": None
     }
     
     df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
     return df_history
 
 def get_stats(df_history, ticker):
-    # Υπολογισμός ποσοστού επιτυχίας
     ticker_history = df_history[df_history['Ticker'] == ticker].dropna(subset=['Result'])
-    total = len(ticker_history)
+    active_trades = ticker_history[ticker_history['Result'] != 'SKIPPED']
+    total = len(active_trades)
     
     if total == 0: 
         return "New Bot 👶 (No stats yet)"
     
-    wins = len(ticker_history[ticker_history['Result'] == 'WIN'])
+    wins = len(active_trades[active_trades['Result'] == 'WIN'])
     win_rate = (wins / total) * 100
     
-    last_res = ticker_history.iloc[-1]['Result'] if total > 0 else "N/A"
-    return f"{win_rate:.1f}% (Last: {last_res})"
+    last_res = ticker_history.iloc[-1]['Result'] if len(ticker_history) > 0 else "N/A"
+    return f"{win_rate:.1f}% ({wins}/{total}) Last: {last_res}"
 
-# --- 2. Η ΚΥΡΙΑ ΚΛΑΣΗ ΑΝΑΛΥΣΗΣ (FULL VERSION) ---
+# --- 2. Η ΚΥΡΙΑ ΚΛΑΣΗ ΑΝΑΛΥΣΗΣ (ALL FEATURES INCLUDED) ---
 
 class StockAnalyzer:
     def __init__(self, ticker, start_date, end_date):
@@ -150,10 +142,12 @@ class StockAnalyzer:
                 df['Close'] = raw.xs('Close', level=0, axis=1).iloc[:, 0]
                 df['High'] = raw.xs('High', level=0, axis=1).iloc[:, 0]
                 df['Low'] = raw.xs('Low', level=0, axis=1).iloc[:, 0]
+                df['Volume'] = raw.xs('Volume', level=0, axis=1).iloc[:, 0]
             else:
                 df['Close'] = raw['Close'] if 'Close' in raw.columns else raw.iloc[:, 0]
                 df['High'] = raw['High'] if 'High' in raw.columns else raw['Close']
                 df['Low'] = raw['Low'] if 'Low' in raw.columns else raw['Close']
+                df['Volume'] = raw['Volume'] if 'Volume' in raw.columns else 0
             for col in df.columns: df[col] = df[col].astype(float)
             return df
         except: return None
@@ -162,10 +156,12 @@ class StockAnalyzer:
         market_ticker = self.determine_market_index()
         print(f"--- DATA FETCH: {self.ticker} vs {market_ticker} ---")
         try:
+            # 1. Βασικά Δεδομένα Μετοχής
             raw = yf.download(self.ticker, start=self.start, end=self.end, progress=False, auto_adjust=False)
             df = self._flatten_yfinance(raw)
             if df is None or df.empty: return None
             
+            # 2. Δεδομένα Δείκτη Αγοράς (Για Beta & Correlation)
             market_raw = yf.download(market_ticker, start=self.start, end=self.end, progress=False, auto_adjust=False)
             df_market = self._flatten_yfinance(market_raw)
             
@@ -176,90 +172,115 @@ class StockAnalyzer:
             else:
                 df['Market_Return'] = 0.0
 
-            self.data = df
+            # 3. Μακροοικονομικά (VIX, Oil, EURUSD) - ΤΑ ΠΡΟΣΘΕΤΟΥΜΕ ΧΩΡΙΣ ΝΑ ΣΒΗΣΟΥΜΕ ΤΑ ΠΑΛΙΑ
+            macros = yf.download(['^VIX', 'CL=F', 'EURUSD=X'], start=self.start, end=self.end, progress=False)
+            
+            if isinstance(macros.columns, pd.MultiIndex):
+                vix = macros.xs('Close', level=0, axis=1)['^VIX']
+                oil = macros.xs('Close', level=0, axis=1)['CL=F']
+                eur = macros.xs('Close', level=0, axis=1)['EURUSD=X']
+            else:
+                vix = pd.Series(0, index=df.index)
+                oil = pd.Series(0, index=df.index)
+                eur = pd.Series(0, index=df.index)
+
+            df['VIX'] = vix
+            df['Oil'] = oil
+            df['EURUSD'] = eur
+            
+            self.data = df.ffill().dropna()
             return self.data
         except Exception as e:
             print(f"Error: {e}")
             return None
 
     def add_indicators(self):
-        # ΑΥΤΗ ΕΙΝΑΙ Η ΠΛΗΡΗΣ ΕΚΔΟΣΗ ΜΕ ΟΛΟΥΣ ΤΟΥΣ ΔΕΙΚΤΕΣ
         df = self.data.copy()
         if len(df) < 60: return
         
-        # 1. Βασικές Αποδόσεις
+        # --- ΠΑΛΙΟΙ ΔΕΙΚΤΕΣ (ΠΟΥ ΖΗΤΗΣΕΣ ΝΑ ΜΗΝ ΚΟΠΟΥΝ) ---
         df['Return'] = df['Close'].pct_change()
-        
-        # 2. Κινητοί Μέσοι (Trend)
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_Ratio'] = df['Close'] / df['SMA_50']
         
-        # 3. RSI (Momentum)
+        # RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # 4. MACD (Trend Momentum)
+        # MACD
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
         ema26 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = ema12 - ema26
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-        # 5. ATR (Volatility)
+        # ATR (Είχε αφαιρεθεί, το ξαναβάζω)
         prev_close = df['Close'].shift(1)
         tr = pd.concat([df['High']-df['Low'], (df['High']-prev_close).abs(), (df['Low']-prev_close).abs()], axis=1).max(axis=1)
         df['ATR'] = tr.rolling(window=14).mean()
         df['ATR_Ratio'] = df['ATR'] / df['Close']
 
-        # 6. Advanced Statistics (Risk & Correlation)
+        # Beta & Correlation (Είχαν αφαιρεθεί, τα ξαναβάζω)
         window = 60
         rolling_cov = df['Return'].rolling(window).cov(df['Market_Return'])
         rolling_var = df['Market_Return'].rolling(window).var()
-        df['Beta'] = rolling_cov / rolling_var  # Πόσο ακολουθεί την αγορά
-        df['Skewness'] = df['Return'].rolling(window).skew() # Κίνδυνος κατάρρευσης
+        df['Beta'] = rolling_cov / rolling_var
+        df['Skewness'] = df['Return'].rolling(window).skew()
         df['Correlation'] = df['Return'].rolling(window).corr(df['Market_Return'])
 
-        # 7. Lag Features (Τι έγινε χθες, προχθές)
+        # Lags
         df['Return_Lag1'] = df['Return'].shift(1)
         df['Return_Lag2'] = df['Return'].shift(2)
         df['Return_Lag3'] = df['Return'].shift(3)
 
+        # --- ΝΕΟΙ ΔΕΙΚΤΕΣ (ULTIMATE FEATURES) ---
+        # Bollinger Bands
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['STD_20'] = df['Close'].rolling(window=20).std()
+        df['Upper_Band'] = df['SMA_20'] + (2 * df['STD_20'])
+        df['Lower_Band'] = df['SMA_20'] - (2 * df['STD_20'])
+        df['BB_Position'] = (df['Close'] - df['Lower_Band']) / (df['Upper_Band'] - df['Lower_Band'])
+        
+        # OBV (Volume)
+        df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+        df['OBV_Slope'] = df['OBV'].pct_change(5)
+
+        # Macro Changes
+        df['VIX_Change'] = df['VIX'].pct_change()
+        df['Oil_Change'] = df['Oil'].pct_change()
+
         self.data = df.dropna()
 
     def optimize_model(self, X_train, y_train):
-        # ΑΥΤΗ ΕΙΝΑΙ Η ΠΛΗΡΗΣ ΕΚΔΟΣΗ ΕΚΠΑΙΔΕΥΣΗΣ (GRID SEARCH)
+        # GRID SEARCH (Όπως το ζήτησες)
         param_grid = {
-            'n_estimators': [100, 200, 300], 
-            'learning_rate': [0.01, 0.03, 0.05],
-            'max_depth': [3, 4, 5],
-            'subsample': [0.7, 0.8],
-            'colsample_bytree': [0.7, 0.8]
+            'n_estimators': [100, 200], 
+            'learning_rate': [0.02, 0.05],
+            'max_depth': [3, 4],
+            'subsample': [0.8],
+            'colsample_bytree': [0.8]
         }
         xgb_model = xgb.XGBRegressor(objective='reg:squarederror', n_jobs=-1)
-        
-        # Χρονολογικός διαχωρισμός (για να μην κλέβει από το μέλλον)
         tscv = TimeSeriesSplit(n_splits=3)
         
-        # Αναζήτηση των καλύτερων παραμέτρων
-        search = RandomizedSearchCV(xgb_model, param_grid, n_iter=10, scoring='neg_mean_squared_error', cv=tscv, verbose=0, n_jobs=-1, random_state=42)
+        search = RandomizedSearchCV(xgb_model, param_grid, n_iter=6, scoring='neg_mean_squared_error', cv=tscv, verbose=0, n_jobs=-1, random_state=42)
         search.fit(X_train, y_train)
-        
         return search.best_estimator_
 
     def run_prediction(self, history_df):
         ml_data = self.data.copy()
-        
-        # Στόχος: Η απόδοση της ΕΠΟΜΕΝΗΣ μέρας
         ml_data['Target'] = ml_data['Return'].shift(-1)
         ml_data = ml_data.dropna(subset=['Target'])
         
-        # Όλα τα δεδομένα που θα δει το μοντέλο
+        # ΛΙΣΤΑ FEATURES: ΤΩΡΑ ΠΕΡΙΛΑΜΒΑΝΕΙ ΤΑ ΠΑΝΤΑ (ΠΑΛΙΑ + ΝΕΑ)
         features = [
             'Return', 'SMA_Ratio', 'RSI', 'MACD', 'MACD_Signal', 
-            'ATR_Ratio', 'Market_Return', 'Beta', 'Skewness', 'Correlation', 
-            'Return_Lag1', 'Return_Lag2', 'Return_Lag3'
+            'ATR_Ratio', 'Market_Return', 'Beta', 'Skewness', 'Correlation', # Παλιά
+            'Return_Lag1', 'Return_Lag2', 'Return_Lag3',
+            'BB_Position', 'OBV_Slope', 'Volume',                            # Νέα
+            'VIX_Change', 'Oil_Change', 'EURUSD'                             # Macro
         ]
         
         X = ml_data[features]
@@ -267,49 +288,43 @@ class StockAnalyzer:
         
         if len(X) == 0: return history_df
 
-        # Διαχωρισμός σε Train/Test (κρατάμε το τελευταίο 20% για έλεγχο)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-        
-        # Εκπαίδευση Μοντέλου
         model = self.optimize_model(X_train, y_train)
         
-        # Πρόβλεψη για ΑΥΡΙΟ
         last_row = self.data.iloc[[-1]][features] 
         current_price = self.data.iloc[-1]['Close']
-        
-        # Λήψη σημαντικών τιμών για την αναφορά
-        last_beta = last_row['Beta'].values[0]
-        last_skew = last_row['Skewness'].values[0]
-        last_rsi = last_row['RSI'].values[0]
         
         pred_return = model.predict(last_row)[0]
         pred_price = current_price * (1 + pred_return)
         
-        # Καθορισμός κατεύθυνσης
-        direction = "UP" if pred_return > 0 else "DOWN"
-        trend_emoji = "🟢" if pred_return > 0 else "🔴"
-        trend_text = "BULLISH" if pred_return > 0 else "BEARISH"
+        # ΦΙΛΤΡΟ ΘΟΡΥΒΟΥ
+        if abs(pred_return) < CONFIDENCE_THRESHOLD:
+            direction = "NEUTRAL"
+            trend_emoji = "⚪"
+            trend_text = "SIDEWAYS"
+        else:
+            direction = "UP" if pred_return > 0 else "DOWN"
+            trend_emoji = "🟢" if pred_return > 0 else "🔴"
+            trend_text = "BULLISH" if pred_return > 0 else "BEARISH"
 
-        # Ενημέρωση Ιστορικού
         today_str = datetime.now().strftime('%Y-%m-%d')
         history_df = update_history(history_df, self.ticker, today_str, pred_return, direction)
-        
-        # Λήψη Στατιστικών Επιτυχίας
         stats_text = get_stats(history_df, self.ticker)
 
-        # Δημιουργία Μηνύματος
+        # Εμφάνιση των πιο σημαντικών δεικτών στο μήνυμα
         msg = (
-            f"🤖 *DAILY UPDATE: {self.ticker}*\n"
-            f"📅 Date: {last_row.index[0].strftime('%d-%m-%Y')}\n"
-            f"🏆 *Win Rate: {stats_text}*\n"
+            f"🤖 *FULL POWER BOT: {self.ticker}*\n"
+            f"📅 {last_row.index[0].strftime('%d-%m')}\n"
+            f"🏆 Win Rate: *{stats_text}*\n"
             f"-------------------\n"
-            f"📊 *Market Stats:*\n"
-            f"• Price: {current_price:.2f}\n"
-            f"• RSI: {last_rsi:.2f}\n"
-            f"• Risk (Skew): {last_skew:.2f}\n"
+            f"📊 *Indicators:*\n"
+            f"• RSI: {last_row['RSI'].values[0]:.1f}\n"
+            f"• Beta: {last_row['Beta'].values[0]:.2f}\n"
+            f"• VIX: {last_row['VIX_Change'].values[0]*100:+.1f}%\n"
+            f"• BB Pos: {last_row['BB_Position'].values[0]:.2f}\n"
             f"-------------------\n"
             f"🔮 *FORECAST:*\n"
-            f"• Trend: {trend_emoji} {trend_text}\n"
+            f"• Signal: {trend_emoji} {trend_text}\n"
             f"• Target: {pred_price:.2f} ({pred_return*100:+.2f}%)"
         )
         
@@ -318,11 +333,9 @@ class StockAnalyzer:
         return history_df
 
 if __name__ == "__main__":
-    print("🚀 Starting StockBot Analysis...")
+    print("🚀 Starting Maximum Power StockBot...")
     
-    # Φόρτωση Ιστορικού (Μνήμη)
     history = load_history()
-    
     today = datetime.now()
     tomorrow_date = today + timedelta(days=1)
     end_str = tomorrow_date.strftime('%Y-%m-%d')
@@ -333,12 +346,10 @@ if __name__ == "__main__":
             bot = StockAnalyzer(ticker, START_DATE, end_str)
             if bot.get_data() is not None:
                 bot.add_indicators()
-                # Τρέχουμε την πρόβλεψη και ενημερώνουμε το ιστορικό
                 history = bot.run_prediction(history)
         except Exception as e:
             print(f"❌ Error analyzing {ticker}: {e}")
             continue
 
-    # Αποθήκευση του ενημερωμένου ιστορικού στο αρχείο
     history.to_csv(HISTORY_FILE, index=False)
     print("💾 History saved successfully.")
