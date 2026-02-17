@@ -2,10 +2,13 @@ name: Daily Stock Prediction
 
 on:
   schedule:
-    # 17:00 UTC = 19:00 Ώρα Ελλάδος (Χειμερινή)
-    # Τρέχει Δευτέρα με Παρασκευή (1-5)
+    # 17:00 UTC = 19:00 Ώρα Ελλάδος
     - cron: '0 17 * * 1-5'
   workflow_dispatch:
+
+# 👇 ΑΥΤΟ ΔΙΝΕΙ ΤΗΝ ΑΔΕΙΑ ΝΑ ΣΩΖΟΥΜΕ ΤΟ ΙΣΤΟΡΙΚΟ
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -28,3 +31,12 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
+      
+    # 👇 ΑΥΤΟ ΚΑΝΕΙ ΤΗΝ ΑΠΟΘΗΚΕΥΣΗ ΣΤΟ GITHUB
+    - name: Commit and Push History
+      run: |
+        git config --global user.name "StockBot"
+        git config --global user.email "bot@example.com"
+        git add history.csv
+        git commit -m "📈 Update prediction history [skip ci]" || exit 0
+        git push
