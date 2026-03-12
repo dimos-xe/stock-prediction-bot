@@ -1,0 +1,41 @@
+name: EU Stock Prediction
+
+on:
+  schedule:
+    # 17:00 UTC = 19:00 Ώρα Ελλάδος
+    - cron: '0 17 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Run EU Prediction Model
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # ΕΔΩ: Του λέμε να τρέξει με την παράμετρο EU
+      run: python main.py EU
+      
+    - name: Commit and Push History
+      run: |
+        git config --global user.name "StockBot"
+        git config --global user.email "bot@example.com"
+        git add history.csv
+        git commit -m "📈 Update EU prediction history [skip ci]" || exit 0
+        git push
