@@ -10,13 +10,16 @@ import os
 import requests
 
 # ==============================================================================
-# 👇 ΡΥΘΜΙΣΕΙΣ (ΟΙ 5 ΜΕΤΟΧΕΣ ΣΟΥ)
+# 👇 ΡΥΘΜΙΣΕΙΣ (ΔΙΑΧΩΡΙΣΜΟΣ ΕΥΡΩΠΗΣ - ΑΜΕΡΙΚΗΣ)
 # ==============================================================================
-SYMBOLS = [
+EU_SYMBOLS = [
     "INGA.AS",  # ING
-    "GS",       # Goldman Sachs
     "DBK.DE",   # Deutsche Bank
-    "SAN.MC",   # Banco Santander
+    "SAN.MC"    # Banco Santander
+]
+
+US_SYMBOLS = [
+    "GS",       # Goldman Sachs
     "ENVA"      # Enova International
 ]
 
@@ -55,14 +58,12 @@ def load_history():
     return pd.DataFrame(columns=["Date", "Ticker", "Predicted_Return", "Direction", "Actual_Return", "Result"])
 
 def update_history(df_history, ticker, date_str, pred_return, direction):
-    # Α. Έλεγχος παλιών προβλέψεων
     mask = (df_history['Ticker'] == ticker) & (df_history['Result'].isna())
     
     if mask.any():
         print(f"🔎 Checking past predictions for {ticker}...")
         try:
             recent_data = yf.download(ticker, period="5d", progress=False, auto_adjust=False)
-            
             if isinstance(recent_data.columns, pd.MultiIndex):
                 close_prices = recent_data.xs('Close', level=0, axis=1).iloc[:, 0]
             else:
@@ -73,19 +74,16 @@ def update_history(df_history, ticker, date_str, pred_return, direction):
                 indices = df_history[mask].index
                 for idx in indices:
                     pred_dir = df_history.loc[idx, 'Direction']
-                    
                     if pred_dir == "NEUTRAL":
                         df_history.loc[idx, 'Result'] = "SKIPPED"
                     else:
                         is_correct = (pred_dir == "UP" and actual_return > 0) or \
                                      (pred_dir == "DOWN" and actual_return < 0)
                         df_history.loc[idx, 'Result'] = "WIN" if is_correct else "LOSS"
-                    
                     df_history.loc[idx, 'Actual_Return'] = round(actual_return * 100, 2)
         except Exception as e:
             print(f"⚠️ Could not verify yesterday's prediction: {e}")
 
-    # Β. Προσθήκη σημερινής πρόβλεψης
     new_row = {
         "Date": date_str,
         "Ticker": ticker,
@@ -94,7 +92,6 @@ def update_history(df_history, ticker, date_str, pred_return, direction):
         "Actual_Return": None,
         "Result": None
     }
-    
     df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True)
     return df_history
 
@@ -102,17 +99,13 @@ def get_stats(df_history, ticker):
     ticker_history = df_history[df_history['Ticker'] == ticker].dropna(subset=['Result'])
     active_trades = ticker_history[ticker_history['Result'] != 'SKIPPED']
     total = len(active_trades)
-    
-    if total == 0: 
-        return "New Bot 👶 (No stats yet)"
-    
+    if total == 0: return "New Bot 👶 (No stats yet)"
     wins = len(active_trades[active_trades['Result'] == 'WIN'])
     win_rate = (wins / total) * 100
-    
     last_res = ticker_history.iloc[-1]['Result'] if len(ticker_history) > 0 else "N/A"
     return f"{win_rate:.1f}% ({wins}/{total}) Last: {last_res}"
 
-# --- 2. Η ΚΥΡΙΑ ΚΛΑΣΗ ΑΝΑΛΥΣΗΣ (ALL FEATURES INCLUDED) ---
+# --- 2. Η ΚΥΡΙΑ ΚΛΑΣΗ ΑΝΑΛΥΣΗΣ ---
 
 class StockAnalyzer:
     def __init__(self, ticker, start_date, end_date):
@@ -129,7 +122,6 @@ class StockAnalyzer:
         }
         for suffix, index_ticker in market_map.items():
             if ticker.endswith(suffix): return index_ticker
-        
         european_suffixes = ['.BR', '.LS', '.VI', '.ST', '.HE', '.CO']
         for suffix in european_suffixes:
             if ticker.endswith(suffix): return '^STOXX50E'
@@ -156,12 +148,10 @@ class StockAnalyzer:
         market_ticker = self.determine_market_index()
         print(f"--- DATA FETCH: {self.ticker} vs {market_ticker} ---")
         try:
-            # 1. Βασικά Δεδομένα Μετοχής
             raw = yf.download(self.ticker, start=self.start, end=self.end, progress=False, auto_adjust=False)
             df = self._flatten_yfinance(raw)
             if df is None or df.empty: return None
             
-            # 2. Δεδομένα Δείκτη Αγοράς (Για Beta & Correlation)
             market_raw = yf.download(market_ticker, start=self.start, end=self.end, progress=False, auto_adjust=False)
             df_market = self._flatten_yfinance(market_raw)
             
@@ -172,9 +162,7 @@ class StockAnalyzer:
             else:
                 df['Market_Return'] = 0.0
 
-            # 3. Μακροοικονομικά (VIX, Oil, EURUSD)
             macros = yf.download(['^VIX', 'CL=F', 'EURUSD=X'], start=self.start, end=self.end, progress=False)
-            
             if isinstance(macros.columns, pd.MultiIndex):
                 vix = macros.xs('Close', level=0, axis=1)['^VIX']
                 oil = macros.xs('Close', level=0, axis=1)['CL=F']
@@ -198,31 +186,27 @@ class StockAnalyzer:
         df = self.data.copy()
         if len(df) < 60: return
         
-        # --- ΠΑΛΙΟΙ ΔΕΙΚΤΕΣ ---
+        # Παλιοί Δείκτες
         df['Return'] = df['Close'].pct_change()
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_Ratio'] = df['Close'] / df['SMA_50']
         
-        # RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # MACD
         ema12 = df['Close'].ewm(span=12, adjust=False).mean()
         ema26 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = ema12 - ema26
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-        # ATR
         prev_close = df['Close'].shift(1)
         tr = pd.concat([df['High']-df['Low'], (df['High']-prev_close).abs(), (df['Low']-prev_close).abs()], axis=1).max(axis=1)
         df['ATR'] = tr.rolling(window=14).mean()
         df['ATR_Ratio'] = df['ATR'] / df['Close']
 
-        # Beta & Correlation & Skewness
         window = 60
         rolling_cov = df['Return'].rolling(window).cov(df['Market_Return'])
         rolling_var = df['Market_Return'].rolling(window).var()
@@ -230,31 +214,26 @@ class StockAnalyzer:
         df['Skewness'] = df['Return'].rolling(window).skew()
         df['Correlation'] = df['Return'].rolling(window).corr(df['Market_Return'])
 
-        # Lags
         df['Return_Lag1'] = df['Return'].shift(1)
         df['Return_Lag2'] = df['Return'].shift(2)
         df['Return_Lag3'] = df['Return'].shift(3)
 
-        # --- ΝΕΟΙ ΔΕΙΚΤΕΣ ---
-        # Bollinger Bands
+        # Νέοι Δείκτες (Ultimate)
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
         df['STD_20'] = df['Close'].rolling(window=20).std()
         df['Upper_Band'] = df['SMA_20'] + (2 * df['STD_20'])
         df['Lower_Band'] = df['SMA_20'] - (2 * df['STD_20'])
         df['BB_Position'] = (df['Close'] - df['Lower_Band']) / (df['Upper_Band'] - df['Lower_Band'])
         
-        # OBV (Volume)
         df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
         df['OBV_Slope'] = df['OBV'].pct_change(5)
 
-        # Macro Changes
         df['VIX_Change'] = df['VIX'].pct_change()
         df['Oil_Change'] = df['Oil'].pct_change()
 
         self.data = df.dropna()
 
     def optimize_model(self, X_train, y_train):
-        # GRID SEARCH
         param_grid = {
             'n_estimators': [100, 200], 
             'learning_rate': [0.02, 0.05],
@@ -264,7 +243,6 @@ class StockAnalyzer:
         }
         xgb_model = xgb.XGBRegressor(objective='reg:squarederror', n_jobs=-1)
         tscv = TimeSeriesSplit(n_splits=3)
-        
         search = RandomizedSearchCV(xgb_model, param_grid, n_iter=6, scoring='neg_mean_squared_error', cv=tscv, verbose=0, n_jobs=-1, random_state=42)
         search.fit(X_train, y_train)
         return search.best_estimator_
@@ -274,7 +252,6 @@ class StockAnalyzer:
         ml_data['Target'] = ml_data['Return'].shift(-1)
         ml_data = ml_data.dropna(subset=['Target'])
         
-        # ΛΙΣΤΑ FEATURES
         features = [
             'Return', 'SMA_Ratio', 'RSI', 'MACD', 'MACD_Signal', 
             'ATR_Ratio', 'Market_Return', 'Beta', 'Skewness', 'Correlation',
@@ -293,14 +270,11 @@ class StockAnalyzer:
         
         last_row = self.data.iloc[[-1]][features] 
         current_price = self.data.iloc[-1]['Close']
-        
-        # Ανάκτηση τιμών για το μήνυμα
-        last_skew = last_row['Skewness'].values[0] # <--- ΤΟ ΖΗΤΟΥΜΕΝΟ
+        last_skew = last_row['Skewness'].values[0]
         
         pred_return = model.predict(last_row)[0]
         pred_price = current_price * (1 + pred_return)
         
-        # ΦΙΛΤΡΟ ΘΟΡΥΒΟΥ
         if abs(pred_return) < CONFIDENCE_THRESHOLD:
             direction = "NEUTRAL"
             trend_emoji = "⚪"
@@ -314,15 +288,14 @@ class StockAnalyzer:
         history_df = update_history(history_df, self.ticker, today_str, pred_return, direction)
         stats_text = get_stats(history_df, self.ticker)
 
-        # ΔΙΟΡΘΩΜΕΝΟ ΜΗΝΥΜΑ ΜΕ ΤΙΜΗ ΚΑΙ SKEWNESS
         msg = (
-            f" *DAILY UPDATE: {self.ticker}*\n"
+            f"*DAILY UPDATE: {self.ticker}*\n"
             f"📅 {last_row.index[0].strftime('%d-%m')}\n"
             f"🏆 Win Rate: *{stats_text}*\n"
             f"-------------------\n"
             f"📊 *Stats:*\n"
-            f"• Price: {current_price:.2f}€\n"       # <--- ΠΡΟΣΤΕΘΗΚΕ
-            f"• Skew: {last_skew:.2f}\n"              # <--- ΠΡΟΣΤΕΘΗΚΕ
+            f"• Price: {current_price:.2f}€\n"
+            f"• Skew: {last_skew:.2f}\n"
             f"• RSI: {last_row['RSI'].values[0]:.1f}\n"
             f"• Beta: {last_row['Beta'].values[0]:.2f}\n"
             f"• VIX: {last_row['VIX_Change'].values[0]*100:+.1f}%\n"
@@ -338,14 +311,27 @@ class StockAnalyzer:
         return history_df
 
 if __name__ == "__main__":
-    print("🚀 Starting Maximum Power StockBot...")
-    
+    # --- ΔΙΑΒΑΣΜΑ ΤΗΣ ΠΕΡΙΟΧΗΣ (EU ή US) ΑΠΟ ΤΟ GITHUB ---
+    region = "ALL"
+    if len(sys.argv) > 1:
+        region = sys.argv[1].upper()
+
+    if region == "EU":
+        symbols_to_run = EU_SYMBOLS
+        print("🌍 Running for EUROPEAN markets...")
+    elif region == "US":
+        symbols_to_run = US_SYMBOLS
+        print("🇺🇸 Running for US markets...")
+    else:
+        symbols_to_run = EU_SYMBOLS + US_SYMBOLS
+        print("🌍🇺🇸 Running for ALL markets...")
+
     history = load_history()
     today = datetime.now()
     tomorrow_date = today + timedelta(days=1)
     end_str = tomorrow_date.strftime('%Y-%m-%d')
     
-    for ticker in SYMBOLS:
+    for ticker in symbols_to_run:
         try:
             print(f"\n⏳ Analyzing {ticker}...")
             bot = StockAnalyzer(ticker, START_DATE, end_str)
